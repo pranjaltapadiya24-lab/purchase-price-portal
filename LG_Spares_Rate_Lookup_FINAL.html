@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Parts Rate Lookup — Live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#EFEBDF;
+    --panel:#FFFDF8;
+    --ink:#272220;
+    --ink-soft:#6E6457;
+    --ink-faint:#A39B8C;
+    --line:#DCD4C0;
+    --accent:#A6792C;
+    --accent-deep:#7C5A1E;
+    --tag-co-bg:#E3EBEE;
+    --tag-co-text:#2F5870;
+    --tag-local-bg:#F4E7D9;
+    --tag-local-text:#8A4B22;
+    --radius:10px;
+    --green:#2D6A4F;
+    --green-bg:#EAF5EF;
+    --red:#9B2335;
+    --red-bg:#FDEAED;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:'Inter',system-ui,sans-serif;
+    min-height:100vh;
+  }
+  body::before{
+    content:"";
+    position:fixed;
+    inset:0;
+    background-image:repeating-linear-gradient(0deg, transparent, transparent 27px, rgba(0,0,0,0.018) 28px);
+    pointer-events:none;
+    z-index:0;
+  }
+  .wrap{max-width:760px;margin:0 auto;padding:0 16px 60px;position:relative;z-index:1;}
+
+  /* ── Header ── */
+  header{padding:28px 0 18px;border-bottom:3px solid var(--ink);margin-bottom:18px;}
+  .header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+  .eyebrow{
+    font-family:'IBM Plex Mono',monospace;font-size:11.5px;
+    letter-spacing:0.12em;text-transform:uppercase;
+    color:var(--accent-deep);font-weight:600;
+  }
+  h1{
+    font-family:'Big Shoulders Display',sans-serif;font-weight:800;
+    font-size:38px;letter-spacing:0.01em;text-transform:uppercase;
+    margin:2px 0 6px;line-height:1;
+  }
+  .sub{font-size:14px;color:var(--ink-soft);}
+  .sub b{color:var(--ink);font-weight:700;}
+  .status-line{
+    margin-top:10px;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11.5px;
+    color:var(--ink-faint);
+    display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  }
+  .status-dot{
+    width:7px;height:7px;border-radius:50%;
+    background:var(--ink-faint);display:inline-block;flex-shrink:0;
+  }
+  .status-dot.live{background:var(--green);animation:pulse 2s infinite;}
+  .status-dot.error{background:var(--red);}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.4;}}
+  #refreshBtn{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;
+    letter-spacing:0.02em;padding:8px 14px;
+    border:1.5px solid var(--ink);border-radius:999px;
+    background:transparent;color:var(--ink);cursor:pointer;
+    white-space:nowrap;flex-shrink:0;
+    transition:background 0.15s,color 0.15s;
+  }
+  #refreshBtn:hover{background:var(--ink);color:var(--panel);}
+  #refreshBtn:disabled{opacity:.5;cursor:not-allowed;}
+
+  /* ── Loading ── */
+  #loadingOverlay{
+    display:flex;flex-direction:column;align-items:center;
+    justify-content:center;padding:80px 20px;gap:18px;
+  }
+  .spinner{
+    width:36px;height:36px;border:3px solid var(--line);
+    border-top-color:var(--accent);border-radius:50%;
+    animation:spin 0.8s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg);}}
+  #loadingMsg{
+    font-family:'IBM Plex Mono',monospace;font-size:13px;
+    color:var(--ink-soft);text-align:center;
+  }
+  #loadingDetail{
+    font-size:12px;color:var(--ink-faint);text-align:center;
+    font-family:'IBM Plex Mono',monospace;max-width:360px;line-height:1.6;
+  }
+
+  /* ── Setup banner ── */
+  #setupBanner{
+    display:none;background:var(--panel);
+    border:1.5px solid var(--accent);border-radius:var(--radius);
+    padding:20px 22px;margin-bottom:20px;
+  }
+  .setup-title{
+    font-family:'Big Shoulders Display',sans-serif;font-weight:700;
+    font-size:20px;text-transform:uppercase;margin-bottom:12px;
+    color:var(--accent-deep);
+  }
+  .setup-steps{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:9px;}
+  .setup-steps li{
+    display:flex;gap:10px;font-size:13.5px;
+    color:var(--ink-soft);line-height:1.5;
+  }
+  .step-num{
+    flex-shrink:0;width:22px;height:22px;border-radius:50%;
+    background:var(--accent);color:white;font-weight:700;font-size:11px;
+    display:flex;align-items:center;justify-content:center;margin-top:1px;
+  }
+  .setup-steps code{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;
+    background:#EFEAE0;padding:1px 5px;border-radius:3px;color:var(--ink);
+  }
+  .setup-note{
+    margin-top:14px;font-size:12px;color:var(--ink-faint);
+    font-family:'IBM Plex Mono',monospace;border-top:1px solid var(--line);
+    padding-top:10px;
+  }
+  .error-list{
+    margin:0;padding:0;list-style:none;
+    display:flex;flex-direction:column;gap:4px;margin-top:6px;
+  }
+  .error-list li{
+    font-family:'IBM Plex Mono',monospace;font-size:11px;
+    color:var(--red);padding:3px 8px;background:var(--red-bg);
+    border-radius:4px;
+  }
+
+  /* ── Search ── */
+  #mainUI{display:none;}
+  .search-row{
+    position:sticky;top:0;background:var(--bg);
+    padding:14px 0 10px;z-index:5;
+  }
+  .search-box{position:relative;}
+  .search-box input{
+    width:100%;font-family:'Inter',sans-serif;font-size:17px;font-weight:500;
+    padding:15px 16px 15px 44px;border:2px solid var(--ink);
+    border-radius:var(--radius);background:var(--panel);color:var(--ink);outline:none;
+  }
+  .search-box input:focus{
+    border-color:var(--accent);
+    box-shadow:0 0 0 3px rgba(166,121,44,0.18);
+  }
+  .search-box svg{
+    position:absolute;left:14px;top:50%;transform:translateY(-50%);
+    width:18px;height:18px;stroke:var(--ink-soft);
+  }
+  .clear-btn{
+    position:absolute;right:10px;top:50%;transform:translateY(-50%);
+    background:none;border:none;color:var(--ink-faint);font-size:20px;
+    cursor:pointer;padding:6px;display:none;line-height:1;
+  }
+  .clear-btn.show{display:block;}
+
+  .filters{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
+  .filter-pill{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;
+    letter-spacing:0.02em;padding:7px 13px;
+    border:1.5px solid var(--ink);border-radius:999px;
+    background:transparent;color:var(--ink);cursor:pointer;text-transform:uppercase;
+  }
+  .filter-pill.active{background:var(--ink);color:var(--panel);}
+
+  .brand-row{
+    display:flex;gap:6px;margin-top:10px;overflow-x:auto;
+    padding-bottom:4px;scrollbar-width:thin;
+  }
+  .brand-chip{
+    flex:0 0 auto;font-family:'IBM Plex Mono',monospace;font-size:11px;
+    font-weight:600;padding:5px 10px;border-radius:6px;
+    border:1px solid var(--line);background:var(--panel);
+    color:var(--ink-soft);cursor:pointer;white-space:nowrap;
+  }
+  .brand-chip.active{border-color:var(--accent);color:var(--accent-deep);background:#FBF3E5;}
+
+  .meta-row{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;
+    color:var(--ink-faint);margin:14px 2px 10px;
+  }
+
+  /* ── Cards ── */
+  .results{display:flex;flex-direction:column;gap:10px;}
+  .card{
+    position:relative;background:var(--panel);
+    border:1.5px solid var(--ink);border-radius:8px;
+    padding:13px 16px 13px 22px;
+    display:flex;justify-content:space-between;align-items:flex-start;gap:14px;
+  }
+  .card::before{
+    content:"";position:absolute;left:-1.5px;top:50%;
+    transform:translate(-50%,-50%);width:11px;height:11px;
+    background:var(--bg);border:1.5px solid var(--ink);border-radius:50%;
+  }
+  .card-main{flex:1;min-width:0;}
+  .item-name{font-size:15.5px;font-weight:600;line-height:1.3;word-break:break-word;}
+  .tag-row{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;}
+  .tag{
+    font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:600;
+    letter-spacing:0.02em;padding:2px 7px;border-radius:4px;text-transform:uppercase;
+  }
+  .tag.co{background:var(--tag-co-bg);color:var(--tag-co-text);}
+  .tag.local{background:var(--tag-local-bg);color:var(--tag-local-text);}
+  .tag.brand{background:#EFEAE0;color:var(--ink-soft);border:1px solid var(--line);}
+  .notes{
+    margin-top:7px;font-size:12.5px;color:var(--ink-soft);line-height:1.4;
+  }
+  .notes b{
+    color:var(--ink-faint);font-weight:600;font-family:'IBM Plex Mono',monospace;
+    font-size:10.5px;text-transform:uppercase;letter-spacing:0.04em;
+  }
+  .rate-tag{flex:0 0 auto;text-align:right;}
+  .rate-num{
+    font-family:'IBM Plex Mono',monospace;font-size:19px;font-weight:600;
+    color:var(--ink);white-space:nowrap;
+  }
+  .rate-num .rs{font-size:13px;color:var(--ink-soft);margin-right:1px;}
+  .rate-raw{
+    font-family:'IBM Plex Mono',monospace;font-size:11px;
+    color:var(--accent-deep);margin-top:2px;white-space:nowrap;
+  }
+
+  /* ── Empty / No results ── */
+  .empty-state,.no-results{text-align:center;padding:60px 20px;color:var(--ink-soft);}
+  .empty-state svg{width:38px;height:38px;stroke:var(--ink-faint);margin-bottom:14px;}
+  .empty-state p,.no-results p{font-size:14.5px;margin:4px 0;}
+  .examples{margin-top:16px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;}
+  .example-chip{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;
+    padding:6px 12px;border:1px dashed var(--ink-faint);border-radius:999px;
+    color:var(--ink-soft);cursor:pointer;background:var(--panel);
+  }
+  .more-hint{
+    text-align:center;padding:14px;font-size:12.5px;
+    color:var(--ink-faint);font-family:'IBM Plex Mono',monospace;
+  }
+
+  footer{
+    margin-top:36px;padding-top:14px;
+    border-top:1.5px solid var(--line);
+    font-size:11.5px;color:var(--ink-faint);
+    text-align:center;font-family:'IBM Plex Mono',monospace;
+  }
+
+  @media(max-width:480px){
+    h1{font-size:30px;}
+    .card{flex-direction:column;}
+    .rate-tag{text-align:left;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="header-top">
+      <div>
+        <div class="eyebrow">Family spare parts ledger</div>
+        <h1>Parts Rate Lookup</h1>
+        <div class="sub"><b id="totalCount">—</b> parts live from Google Sheets</div>
+      </div>
+      <button id="refreshBtn">↻ Refresh</button>
+    </div>
+    <div class="status-line">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Loading…</span>
+    </div>
+  </header>
+
+  <!-- Loading state -->
+  <div id="loadingOverlay">
+    <div class="spinner"></div>
+    <div id="loadingMsg">Fetching latest rates from Google Sheets…</div>
+    <div id="loadingDetail"></div>
+  </div>
+
+  <!-- Setup instructions (shown when Sheet IDs not filled in) -->
+  <div id="setupBanner">
+    <div class="setup-title">One-time setup needed</div>
+    <ol class="setup-steps">
+      <li>
+        <span class="step-num">1</span>
+        <span>Open Google Drive and upload each of your 3 Excel files — Drive will convert them to Google Sheets automatically.</span>
+      </li>
+      <li>
+        <span class="step-num">2</span>
+        <span>Open each Google Sheet → click <b>Share</b> → set access to <b>"Anyone with the link can view"</b>. Then copy the long ID from the URL (between <code>/d/</code> and <code>/edit</code>).</span>
+      </li>
+      <li>
+        <span class="step-num">3</span>
+        <span>Open this HTML file in Notepad or VS Code. Find the <code>SHEET_CONFIG</code> section near the top of the <code>&lt;script&gt;</code> block. Paste each Spreadsheet ID into the matching slot.</span>
+      </li>
+      <li>
+        <span class="step-num">4</span>
+        <span>Save the file and open it in Chrome. Prices will now load live — every time your father edits a cell, the portal reflects it on the next refresh.</span>
+      </li>
+    </ol>
+    <div class="setup-note">
+      If you see CORS or fetch errors, host this file on GitHub Pages (same as your order portal) — that fixes it permanently.
+    </div>
+    <div id="errorList"></div>
+  </div>
+
+  <!-- Main search UI -->
+  <div id="mainUI">
+    <div class="search-row">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input id="searchInput" type="text" placeholder="Search part name… e.g. feed valve, pcb, drain motor" autocomplete="off">
+        <button class="clear-btn" id="clearBtn">×</button>
+      </div>
+      <div class="filters">
+        <button class="filter-pill active" data-source="all">All</button>
+        <button class="filter-pill" data-source="company">Company Brands</button>
+        <button class="filter-pill" data-source="local">Local Suppliers</button>
+      </div>
+      <div class="brand-row" id="brandRow"></div>
+    </div>
+    <div class="meta-row" id="metaRow"></div>
+    <div id="resultsArea"></div>
+  </div>
+
+  <footer>Charbhuja Traders · rates live from Google Sheets · last updated: <span id="footerTime">—</span></footer>
+
+</div>
+
+<script>
+// =====================================================================
+//  CONFIGURATION — Fill in your Google Spreadsheet IDs below
+//  To find the ID: open the sheet → copy from URL between /d/ and /edit
+//  e.g. https://docs.google.com/spreadsheets/d/THIS_PART_IS_THE_ID/edit
+//
+//  Each sheet must be shared as "Anyone with the link can view"
+// =====================================================================
+const SHEET_CONFIG = [
+  {
+    label: "Purchase Rate — Company Brands",
+    spreadsheetId: "1JVwRGx8_t7eWRtJ4-BoxpGWGWv6Ai-Zb",
+    source: "company",
+    tabs: ["GHANTI","wp","tools.cover","ifb","vol","chennai","aur","lg","midea","haier","ww","GODRJ"],
+    itemCol:  0,
+    brandCol: 1,
+    rateCol:  2,
+    notesStartCol: 3
+  },
+  {
+    label: "Purchase Rate — Local Suppliers",
+    spreadsheetId: "1kdaDfI1jwDMneVU0fNMPCnR25cE9-AjM",
+    source: "local",
+    tabs: ["asc","mix","s4a","dvm deflex","si.jai","ARHM","tomar","perfect","jolly","ARROW","tanya","OM"],
+    itemCol:  0,
+    brandCol: 1,
+    rateCol:  2,
+    notesStartCol: 3
+  },
+  {
+    label: "Third Rate Sheet",
+    spreadsheetId: "1elEg8ELhzIUxRmxHBiyBq8fIddM4uSqX",
+    source: "local",   // change to "company" if needed
+    tabs: ["bhupat bhai","stand"],
+    itemCol:  0,
+    brandCol: 1,
+    rateCol:  2,
+    notesStartCol: 3
+  }
+];
+// =====================================================================
+//  END OF CONFIGURATION — do not edit below unless you know what you're doing
+// =====================================================================
+
+
+// ── CSV parser (RFC 4180 compliant) ───────────────────────────────────
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = '', inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') {
+        if (text[i+1] === '"') { field += '"'; i++; }
+        else inQ = false;
+      } else {
+        field += c;
+      }
+    } else {
+      if      (c === '"')  inQ = true;
+      else if (c === ',')  { row.push(field); field = ''; }
+      else if (c === '\n') { row.push(field); field = ''; rows.push(row); row = []; }
+      else if (c === '\r') { /* skip */ }
+      else                   field += c;
+    }
+  }
+  if (row.length || field) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+// ── Row → item object ─────────────────────────────────────────────────
+function rowToItem(row, cfg, tabName, idCounter) {
+  const get = (col) => (row[col] !== undefined ? String(row[col]).trim() : '');
+
+  const item = get(cfg.itemCol);
+  if (!item) return null;                          // skip blank rows
+  if (item.toLowerCase() === 'item') return null;  // skip header rows
+
+  const brand = get(cfg.brandCol) || null;
+
+  // Rate: try numeric first, fall back to raw text
+  const rateStr = get(cfg.rateCol);
+  let rate = null, rate_raw = null;
+  if (rateStr) {
+    const n = parseFloat(rateStr.replace(/[,₹\s]/g, ''));
+    if (!isNaN(n) && n > 0) rate = n;
+    else if (rateStr && rateStr !== '0') rate_raw = rateStr;
+  }
+
+  // Notes: join non-empty values from notesStartCol onwards
+  const notesParts = row
+    .slice(cfg.notesStartCol)
+    .map(v => String(v || '').trim())
+    .filter(v => v && v !== '0' && v.toLowerCase() !== 'nan');
+  const notes = notesParts.join(' | ');
+
+  return { id: idCounter, item, brand, rate, rate_raw, notes, sheet: tabName, source: cfg.source };
+}
+
+// ── Fetch one tab from Google Sheets as CSV ───────────────────────────
+async function fetchTab(spreadsheetId, tabName) {
+  const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const text = await res.text();
+  // If Google returns an error page (HTML) instead of CSV
+  if (text.trim().startsWith('<')) throw new Error('Non-CSV response (sheet may not exist or is private)');
+  return text;
+}
+
+// ── Load all configured sheets ────────────────────────────────────────
+async function loadAllSheets() {
+  const allItems = [];
+  const errors   = [];
+  let idCounter  = 1;
+  let tabsAttempted = 0;
+  let tabsLoaded    = 0;
+
+  for (const cfg of SHEET_CONFIG) {
+    if (!cfg.tabs || cfg.tabs.length === 0) continue;
+    if (cfg.spreadsheetId.startsWith('PASTE_')) {
+      errors.push(`${cfg.label}: Spreadsheet ID not configured yet`);
+      continue;
+    }
+
+    for (const tab of cfg.tabs) {
+      tabsAttempted++;
+      document.getElementById('loadingDetail').textContent =
+        `Loading ${cfg.label} → ${tab} …`;
+      try {
+        const csvText = await fetchTab(cfg.spreadsheetId, tab);
+        const rows    = parseCSV(csvText);
+        let tabItems  = 0;
+        for (const row of rows) {
+          const obj = rowToItem(row, cfg, tab, idCounter);
+          if (obj) { allItems.push(obj); idCounter++; tabItems++; }
+        }
+        tabsLoaded++;
+      } catch (e) {
+        errors.push(`${cfg.label} → ${tab}: ${e.message}`);
+      }
+    }
+  }
+
+  return { allItems, errors, tabsAttempted, tabsLoaded };
+}
+
+// ── Global state ──────────────────────────────────────────────────────
+let ALL_ITEMS = [];
+const state = { query: '', source: 'all', brand: null };
+const MAX_RENDER = 150;
+
+// ── Helpers ───────────────────────────────────────────────────────────
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function fmtRate(it) {
+  if (it.rate !== null && it.rate !== undefined) {
+    const display = (it.rate % 1 === 0) ? it.rate.toFixed(0) : it.rate.toFixed(2);
+    return `<div class="rate-num"><span class="rs">₹</span>${display}</div>`;
+  }
+  if (it.rate_raw) return `<div class="rate-raw">${esc(it.rate_raw)}</div>`;
+  return `<div class="rate-raw" style="color:var(--ink-faint)">no rate on file</div>`;
+}
+
+function cardHtml(it) {
+  const tagClass = it.source === 'company' ? 'co' : 'local';
+  const tagLabel = it.source === 'company' ? 'Company' : 'Local';
+  let tags = `<span class="tag ${tagClass}">${tagLabel}</span><span class="tag brand">${esc(it.sheet)}</span>`;
+  if (it.brand) tags += `<span class="tag brand">${esc(it.brand)}</span>`;
+  const notes = it.notes && it.notes.trim()
+    ? `<div class="notes"><b>Market notes:</b> ${esc(it.notes)}</div>` : '';
+  return `<div class="card">
+    <div class="card-main">
+      <div class="item-name">${esc(it.item)}</div>
+      <div class="tag-row">${tags}</div>${notes}
+    </div>
+    <div class="rate-tag">${fmtRate(it)}</div>
+  </div>`;
+}
+
+function emptyStateHtml() {
+  return `<div class="empty-state">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <p>Start typing a part name to search.</p>
+    <p>Matches across item names, brands, and supplier sheets.</p>
+    <div class="examples">
+      <div class="example-chip" data-ex="feed valve">feed valve</div>
+      <div class="example-chip" data-ex="pcb">pcb</div>
+      <div class="example-chip" data-ex="drain motor">drain motor</div>
+      <div class="example-chip" data-ex="capacitor">capacitor</div>
+    </div>
+  </div>`;
+}
+
+// ── Brand chips ───────────────────────────────────────────────────────
+function buildSheetMeta() {
+  const meta = {};
+  ALL_ITEMS.forEach(it => {
+    if (!meta[it.sheet]) meta[it.sheet] = { sheet: it.sheet, source: it.source, count: 0 };
+    meta[it.sheet].count++;
+  });
+  return Object.values(meta).sort((a,b) => b.count - a.count);
+}
+
+let brandList = [];
+function renderBrandChips() {
+  const row = document.getElementById('brandRow');
+  row.innerHTML = '';
+  const visible = brandList.filter(b => state.source === 'all' || b.source === state.source);
+  visible.forEach(b => {
+    const chip = document.createElement('div');
+    chip.className = 'brand-chip' + (state.brand === b.sheet ? ' active' : '');
+    chip.textContent = b.sheet;
+    chip.onclick = () => {
+      state.brand = state.brand === b.sheet ? null : b.sheet;
+      renderBrandChips();
+      runSearch();
+    };
+    row.appendChild(chip);
+  });
+}
+
+// ── Search ────────────────────────────────────────────────────────────
+function runSearch() {
+  const q    = state.query.trim().toLowerCase();
+  const meta = document.getElementById('metaRow');
+  const area = document.getElementById('resultsArea');
+  let pool   = ALL_ITEMS;
+  if (state.source !== 'all') pool = pool.filter(it => it.source === state.source);
+  if (state.brand)            pool = pool.filter(it => it.sheet === state.brand);
+
+  if (!q) {
+    if (state.brand || state.source !== 'all') {
+      meta.textContent = `${pool.length.toLocaleString('en-IN')} parts in this filter`;
+      const slice = pool.slice(0, MAX_RENDER);
+      area.innerHTML = `<div class="results">${slice.map(cardHtml).join('')}</div>` +
+        (pool.length > MAX_RENDER ? `<div class="more-hint">Showing first ${MAX_RENDER} — type a word to narrow down</div>` : '');
+    } else {
+      meta.textContent = '';
+      area.innerHTML = emptyStateHtml();
+      area.querySelectorAll('.example-chip').forEach(c => {
+        c.onclick = () => {
+          document.getElementById('searchInput').value = c.dataset.ex;
+          document.getElementById('searchInput').dispatchEvent(new Event('input'));
+          document.getElementById('searchInput').focus();
+        };
+      });
+    }
+    return;
+  }
+
+  const terms   = q.split(/\s+/).filter(Boolean);
+  const matches = pool.filter(it => {
+    const hay = (it.item + ' ' + (it.brand||'') + ' ' + it.sheet + ' ' + (it.notes||'')).toLowerCase();
+    return terms.every(t => hay.includes(t));
+  });
+
+  meta.textContent = `${matches.length.toLocaleString('en-IN')} part${matches.length === 1 ? '' : 's'} found`;
+  if (matches.length === 0) {
+    area.innerHTML = `<div class="no-results"><p>No parts matched that search.</p><p>Try a shorter or different word.</p></div>`;
+    return;
+  }
+  const slice = matches.slice(0, MAX_RENDER);
+  area.innerHTML = `<div class="results">${slice.map(cardHtml).join('')}</div>` +
+    (matches.length > MAX_RENDER ? `<div class="more-hint">Showing first ${MAX_RENDER} of ${matches.length.toLocaleString('en-IN')} — add another word to narrow down</div>` : '');
+}
+
+// ── Init / Refresh ────────────────────────────────────────────────────
+async function init() {
+  // Reset UI
+  document.getElementById('loadingOverlay').style.display = 'flex';
+  document.getElementById('mainUI').style.display        = 'none';
+  document.getElementById('setupBanner').style.display   = 'none';
+  document.getElementById('loadingDetail').textContent   = '';
+  document.getElementById('refreshBtn').disabled         = true;
+  document.getElementById('statusDot').className         = 'status-dot';
+  document.getElementById('statusText').textContent      = 'Loading…';
+
+  // Check if any IDs are configured
+  const anyConfigured = SHEET_CONFIG.some(cfg =>
+    !cfg.spreadsheetId.startsWith('PASTE_') && cfg.tabs && cfg.tabs.length > 0
+  );
+
+  if (!anyConfigured) {
+    document.getElementById('loadingOverlay').style.display = 'none';
+    document.getElementById('setupBanner').style.display    = 'block';
+    const allErrors = SHEET_CONFIG.map(cfg => `${cfg.label}: Spreadsheet ID not configured`);
+    showErrors(allErrors);
+    document.getElementById('statusDot').className  = 'status-dot error';
+    document.getElementById('statusText').textContent = 'Setup needed — see instructions above';
+    document.getElementById('refreshBtn').disabled  = false;
+    return;
+  }
+
+  const { allItems, errors, tabsAttempted, tabsLoaded } = await loadAllSheets();
+  ALL_ITEMS  = allItems;
+  brandList  = buildSheetMeta();
+
+  document.getElementById('loadingOverlay').style.display = 'none';
+
+  if (allItems.length > 0) {
+    document.getElementById('mainUI').style.display = 'block';
+    document.getElementById('totalCount').textContent = allItems.length.toLocaleString('en-IN');
+    renderBrandChips();
+    runSearch();
+  }
+
+  if (errors.length > 0) {
+    document.getElementById('setupBanner').style.display = 'block';
+    showErrors(errors);
+  }
+
+  // Status bar
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+  const dateStr = now.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  const timeLabel = `${dateStr}, ${timeStr}`;
+  document.getElementById('footerTime').textContent = timeLabel;
+
+  if (errors.length === 0) {
+    document.getElementById('statusDot').className  = 'status-dot live';
+    document.getElementById('statusText').textContent = `Live · ${tabsLoaded} of ${tabsAttempted} sheets loaded · ${timeLabel}`;
+  } else {
+    document.getElementById('statusDot').className  = 'status-dot error';
+    document.getElementById('statusText').textContent = `${tabsLoaded}/${tabsAttempted} sheets loaded · ${errors.length} error(s) · ${timeLabel}`;
+  }
+
+  document.getElementById('refreshBtn').disabled = false;
+}
+
+function showErrors(errors) {
+  const el = document.getElementById('errorList');
+  if (!el || errors.length === 0) return;
+  el.innerHTML = `<ul class="error-list">${errors.map(e => `<li>✕ ${e}</li>`).join('')}</ul>`;
+}
+
+// ── Event listeners ───────────────────────────────────────────────────
+document.getElementById('refreshBtn').onclick = () => init();
+
+document.querySelectorAll('.filter-pill').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('.filter-pill').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.source = btn.dataset.source;
+    state.brand  = null;
+    renderBrandChips();
+    runSearch();
+  };
+});
+
+const searchInput = document.getElementById('searchInput');
+const clearBtn    = document.getElementById('clearBtn');
+let debounceTimer;
+searchInput.addEventListener('input', () => {
+  state.query = searchInput.value;
+  clearBtn.classList.toggle('show', state.query.length > 0);
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(runSearch, 60);
+});
+clearBtn.onclick = () => {
+  searchInput.value = '';
+  state.query = '';
+  clearBtn.classList.remove('show');
+  searchInput.focus();
+  runSearch();
+};
+
+// ── Start ─────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
