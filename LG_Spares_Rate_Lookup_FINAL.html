@@ -357,31 +357,19 @@ const SHEET_CONFIG = [
     label: "Purchase Rate — Company Brands",
     spreadsheetId: "1JVwRGx8_t7eWRtJ4-BoxpGWGWv6Ai-Zb",
     source: "company",
-    tabs: ["GHANTI","wp","tools.cover","ifb","vol","chennai","aur","lg","midea","haier","ww","GODRJ"],
-    itemCol:  0,
-    brandCol: 1,
-    rateCol:  2,
-    notesStartCol: 3
+    tabs: ["GHANTI","wp","tools.cover","ifb","vol","chennai","aur","lg","midea","haier","ww","GODRJ","Sheet1"]
   },
   {
     label: "Purchase Rate — Local Suppliers",
     spreadsheetId: "1kdaDfI1jwDMneVU0fNMPCnR25cE9-AjM",
     source: "local",
-    tabs: ["asc","mix","s4a","dvm deflex","si.jai","ARHM","tomar","perfect","jolly","ARROW","tanya","OM"],
-    itemCol:  0,
-    brandCol: 1,
-    rateCol:  2,
-    notesStartCol: 3
+    tabs: ["asc","mix","s4a","dvm deflex","si.jai","ARHM","tomar","perfect","jolly","ARROW","tanya","OM"]
   },
   {
     label: "Third Rate Sheet",
     spreadsheetId: "1elEg8ELhzIUxRmxHBiyBq8fIddM4uSqX",
-    source: "local",   // change to "company" if needed
-    tabs: ["bhupat bhai","stand"],
-    itemCol:  0,
-    brandCol: 1,
-    rateCol:  2,
-    notesStartCol: 3
+    source: "local",
+    tabs: ["bhupat bhai","stand"]
   }
 ];
 // =====================================================================
@@ -414,18 +402,97 @@ function parseCSV(text) {
   return rows;
 }
 
-// ── Row → item object ─────────────────────────────────────────────────
-function rowToItem(row, cfg, tabName, idCounter) {
-  const get = (col) => (row[col] !== undefined ? String(row[col]).trim() : '');
+// ── Auto-detect column schema for a sheet ────────────────────────────
+// Every sheet in the father's files has a different structure.
+// This scans the first 60 rows to figure out which column is the rate,
+// which is the main item description, and which is a secondary code/brand.
+function detectSchema(rows) {
+  const SAMPLE      = Math.min(60, rows.length);
+  const PRICE_MIN   = 1;
+  const PRICE_MAX   = 200000;
+  const RATE_COL_MAX = 8; // rate is never in col 9+ (those are accounting/billing cols)
 
-  const item = get(cfg.itemCol);
-  if (!item) return null;                          // skip blank rows
-  if (item.toLowerCase() === 'item') return null;  // skip header rows
+  const numCount  = [];
+  const txtCount  = [];
+  const txtLen    = [];
+  let   validRows = 0;
 
-  const brand = get(cfg.brandCol) || null;
+  for (let r = 0; r < SAMPLE; r++) {
+    const row = rows[r];
+    let rowHasData = false;
 
-  // Rate: try numeric first, fall back to raw text
-  const rateStr = get(cfg.rateCol);
+    for (let c = 0; c < row.length; c++) {
+      const v = String(row[c] || '').trim();
+      if (!v || v.toLowerCase() === 'nan') continue;
+      rowHasData = true;
+
+      if (!numCount[c]) { numCount[c] = 0; txtCount[c] = 0; txtLen[c] = 0; }
+
+      const n = parseFloat(v.replace(/[,₹\s]/g, ''));
+      if (!isNaN(n) && n >= PRICE_MIN && n <= PRICE_MAX) {
+        numCount[c]++;
+      } else if (v.length > 2) {
+        txtCount[c]++;
+        txtLen[c] += v.length;
+      }
+    }
+    if (rowHasData) validRows++;
+  }
+
+  if (validRows === 0) return { rateCol: 2, itemCol: 0, brandCol: -1 };
+
+  // Rate col = highest numeric density, search only within first RATE_COL_MAX cols
+  // Penalise col0 (usually item/part-code, rarely price)
+  let rateCol = -1, bestNum = 0;
+  for (let c = 0; c <= Math.min(RATE_COL_MAX, (numCount.length || 0) - 1); c++) {
+    const score = (numCount[c] || 0) / validRows * (c === 0 ? 0.6 : 1.0);
+    if (score > bestNum && score > 0.2) { bestNum = score; rateCol = c; }
+  }
+  if (rateCol === -1) rateCol = 2;
+
+  // Item col = column with longest average text BEFORE the rate col
+  let itemCol = 0, bestTxt = 0;
+  for (let c = 0; c < rateCol; c++) {
+    const avgLen = (txtCount[c] || 0) > 0 ? (txtLen[c] || 0) / txtCount[c] : 0;
+    const score  = ((txtCount[c] || 0) / validRows) * avgLen;
+    if (score > bestTxt) { bestTxt = score; itemCol = c; }
+  }
+
+  // Brand col = another text col before rateCol (not the item col)
+  let brandCol = -1;
+  for (let c = 0; c < rateCol; c++) {
+    if (c === itemCol) continue;
+    if ((txtCount[c] || 0) / validRows > 0.15) { brandCol = c; break; }
+  }
+
+  return { rateCol, itemCol, brandCol };
+}
+
+// ── Check if a row is a header / metadata row ─────────────────────────
+function isHeaderRow(row, schema) {
+  const HEADER_WORDS = ['rate','description','part code','item','particular',
+                        'paras rate','dealer net','lgdealernetplus'];
+  const v = String(row[schema.itemCol] || '').trim().toLowerCase();
+  if (!v || v === 'nan') return true;
+  if (v.startsWith('http')) return true;
+  if (HEADER_WORDS.some(h => v.includes(h) && v.length < 30)) return true;
+  return false;
+}
+
+// ── Row → item object (uses auto-detected schema) ─────────────────────
+function rowToItem(row, schema, source, tabName, idCounter) {
+  const get = c => (row[c] !== undefined ? String(row[c]).trim() : '');
+
+  if (isHeaderRow(row, schema)) return null;
+
+  const item = get(schema.itemCol);
+  if (!item || item.toLowerCase() === 'nan') return null;
+  // If the "item" cell is a pure number, this row uses a different column layout — skip
+  const itemAsNum = parseFloat(item.replace(/[,₹\s]/g, ''));
+  if (!isNaN(itemAsNum) && String(itemAsNum) === item.replace(/[,₹\s]/g, '')) return null;
+
+  // Rate
+  const rateStr = schema.rateCol >= 0 ? get(schema.rateCol) : '';
   let rate = null, rate_raw = null;
   if (rateStr) {
     const n = parseFloat(rateStr.replace(/[,₹\s]/g, ''));
@@ -433,14 +500,20 @@ function rowToItem(row, cfg, tabName, idCounter) {
     else if (rateStr && rateStr !== '0') rate_raw = rateStr;
   }
 
-  // Notes: join non-empty values from notesStartCol onwards
-  const notesParts = row
-    .slice(cfg.notesStartCol)
-    .map(v => String(v || '').trim())
-    .filter(v => v && v !== '0' && v.toLowerCase() !== 'nan');
+  const brand = schema.brandCol >= 0 ? (get(schema.brandCol) || null) : null;
+
+  // Notes: all other cols except item/brand/rate, capped at 8 cols after rate
+  // to avoid pulling in accounting/billing data that lives far to the right
+  const notesParts = [];
+  const notesEnd = Math.min(row.length, schema.rateCol + 9);
+  for (let c = 0; c < notesEnd; c++) {
+    if (c === schema.itemCol || c === schema.brandCol || c === schema.rateCol) continue;
+    const v = get(c);
+    if (v && v.toLowerCase() !== 'nan' && v !== '0') notesParts.push(v);
+  }
   const notes = notesParts.join(' | ');
 
-  return { id: idCounter, item, brand, rate, rate_raw, notes, sheet: tabName, source: cfg.source };
+  return { id: idCounter, item, brand, rate, rate_raw, notes, sheet: tabName, source };
 }
 
 // ── Fetch one tab from Google Sheets as CSV ───────────────────────────
@@ -449,16 +522,15 @@ async function fetchTab(spreadsheetId, tabName) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const text = await res.text();
-  // If Google returns an error page (HTML) instead of CSV
-  if (text.trim().startsWith('<')) throw new Error('Non-CSV response (sheet may not exist or is private)');
+  if (text.trim().startsWith('<')) throw new Error('Not CSV — sheet may be private or tab name wrong');
   return text;
 }
 
 // ── Load all configured sheets ────────────────────────────────────────
 async function loadAllSheets() {
-  const allItems = [];
-  const errors   = [];
-  let idCounter  = 1;
+  const allItems    = [];
+  const errors      = [];
+  let idCounter     = 1;
   let tabsAttempted = 0;
   let tabsLoaded    = 0;
 
@@ -476,10 +548,13 @@ async function loadAllSheets() {
       try {
         const csvText = await fetchTab(cfg.spreadsheetId, tab);
         const rows    = parseCSV(csvText);
-        let tabItems  = 0;
+
+        // Auto-detect this sheet's column layout
+        const schema  = detectSchema(rows);
+
         for (const row of rows) {
-          const obj = rowToItem(row, cfg, tab, idCounter);
-          if (obj) { allItems.push(obj); idCounter++; tabItems++; }
+          const obj = rowToItem(row, schema, cfg.source, tab, idCounter);
+          if (obj) { allItems.push(obj); idCounter++; }
         }
         tabsLoaded++;
       } catch (e) {
