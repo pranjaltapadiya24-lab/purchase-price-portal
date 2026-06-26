@@ -403,75 +403,74 @@ function parseCSV(text) {
 }
 
 // ── Auto-detect column schema for a sheet ────────────────────────────
-// Every sheet in the father's files has a different structure.
-// This scans the first 60 rows to figure out which column is the rate,
-// which is the main item description, and which is a secondary code/brand.
+// Scans up to 60 rows to find: which column is the rate (most numeric
+// values in price range, capped at col 8), which column is the item
+// (most UNIQUE text values before the rate col — brand names repeat,
+// part descriptions don't), and which is a secondary brand/code col.
 function detectSchema(rows) {
-  const SAMPLE      = Math.min(60, rows.length);
-  const PRICE_MIN   = 1;
-  const PRICE_MAX   = 200000;
-  const RATE_COL_MAX = 8; // rate is never in col 9+ (those are accounting/billing cols)
+  const SAMPLE       = Math.min(60, rows.length);
+  const PRICE_MIN    = 1;
+  const PRICE_MAX    = 200000;
+  const RATE_COL_MAX = 8; // accounting/billing cols are always far right
 
-  const numCount  = [];
-  const txtCount  = [];
-  const txtLen    = [];
-  let   validRows = 0;
+  const numCount = [], txtCount = [], txtLen = [], uniqueVals = [];
+  let validRows = 0;
 
   for (let r = 0; r < SAMPLE; r++) {
     const row = rows[r];
-    let rowHasData = false;
-
+    let hasData = false;
     for (let c = 0; c < row.length; c++) {
       const v = String(row[c] || '').trim();
       if (!v || v.toLowerCase() === 'nan') continue;
-      rowHasData = true;
-
-      if (!numCount[c]) { numCount[c] = 0; txtCount[c] = 0; txtLen[c] = 0; }
-
+      hasData = true;
+      if (!numCount[c]) { numCount[c]=0; txtCount[c]=0; txtLen[c]=0; uniqueVals[c]=new Set(); }
       const n = parseFloat(v.replace(/[,₹\s]/g, ''));
       if (!isNaN(n) && n >= PRICE_MIN && n <= PRICE_MAX) {
         numCount[c]++;
-      } else if (v.length > 2) {
+      } else if (v.length > 1) {
         txtCount[c]++;
         txtLen[c] += v.length;
+        uniqueVals[c].add(v.toLowerCase());
       }
     }
-    if (rowHasData) validRows++;
+    if (hasData) validRows++;
   }
+  if (validRows === 0) return { rateCol:2, itemCol:0, brandCol:-1 };
 
-  if (validRows === 0) return { rateCol: 2, itemCol: 0, brandCol: -1 };
-
-  // Rate col = highest numeric density, search only within first RATE_COL_MAX cols
-  // Penalise col0 (usually item/part-code, rarely price)
+  // Rate col: highest numeric density within col 0-8, penalise col0
   let rateCol = -1, bestNum = 0;
-  for (let c = 0; c <= Math.min(RATE_COL_MAX, (numCount.length || 0) - 1); c++) {
-    const score = (numCount[c] || 0) / validRows * (c === 0 ? 0.6 : 1.0);
+  for (let c = 0; c <= Math.min(RATE_COL_MAX, numCount.length-1); c++) {
+    const score = (numCount[c]||0) / validRows * (c===0 ? 0.6 : 1.0);
     if (score > bestNum && score > 0.2) { bestNum = score; rateCol = c; }
   }
   if (rateCol === -1) rateCol = 2;
 
-  // Item col = column with longest average text BEFORE the rate col
+  // Item col: column with highest (fillRatio × uniquenessRatio × avgLength)
+  // before rateCol. Uniqueness distinguishes item names (all different)
+  // from brand names (bosch/lg/samsung repeat across many rows).
   let itemCol = 0, bestTxt = 0;
   for (let c = 0; c < rateCol; c++) {
-    const avgLen = (txtCount[c] || 0) > 0 ? (txtLen[c] || 0) / txtCount[c] : 0;
-    const score  = ((txtCount[c] || 0) / validRows) * avgLen;
+    const fill    = (txtCount[c]||0) / validRows;
+    const uniq    = (txtCount[c]||0) > 0 ? (uniqueVals[c]||new Set()).size / txtCount[c] : 0;
+    const avgLen  = (txtCount[c]||0) > 0 ? (txtLen[c]||0) / txtCount[c] : 0;
+    const score   = fill * uniq * avgLen;
     if (score > bestTxt) { bestTxt = score; itemCol = c; }
   }
 
-  // Brand col = another text col before rateCol (not the item col)
+  // Brand col: another text col before rateCol, not the item col
   let brandCol = -1;
   for (let c = 0; c < rateCol; c++) {
     if (c === itemCol) continue;
-    if ((txtCount[c] || 0) / validRows > 0.15) { brandCol = c; break; }
+    if ((txtCount[c]||0) / validRows > 0.15) { brandCol = c; break; }
   }
 
   return { rateCol, itemCol, brandCol };
 }
 
-// ── Check if a row is a header / metadata row ─────────────────────────
+// ── Header / metadata row check ───────────────────────────────────────
+const HEADER_WORDS = ['rate','description','part code','item','particular',
+                      'paras rate','dealer net','lgdealernetplus'];
 function isHeaderRow(row, schema) {
-  const HEADER_WORDS = ['rate','description','part code','item','particular',
-                        'paras rate','dealer net','lgdealernetplus'];
   const v = String(row[schema.itemCol] || '').trim().toLowerCase();
   if (!v || v === 'nan') return true;
   if (v.startsWith('http')) return true;
@@ -481,39 +480,44 @@ function isHeaderRow(row, schema) {
 
 // ── Row → item object (uses auto-detected schema) ─────────────────────
 function rowToItem(row, schema, source, tabName, idCounter) {
-  const get = c => (row[c] !== undefined ? String(row[c]).trim() : '');
+  const get = c => String(row[c] !== undefined ? row[c] : '').trim();
 
   if (isHeaderRow(row, schema)) return null;
 
   const item = get(schema.itemCol);
   if (!item || item.toLowerCase() === 'nan') return null;
-  // If the "item" cell is a pure number, this row uses a different column layout — skip
-  const itemAsNum = parseFloat(item.replace(/[,₹\s]/g, ''));
-  if (!isNaN(itemAsNum) && String(itemAsNum) === item.replace(/[,₹\s]/g, '')) return null;
+  // Skip rows where the "item" cell is actually a bare number
+  // (happens in sheets with mixed layouts, e.g. midea early rows)
+  const asNum = parseFloat(item.replace(/[,₹\s]/g,''));
+  if (!isNaN(asNum) && item.replace(/[,₹.\s]/g,'').match(/^\d+$/)) return null;
 
   // Rate
   const rateStr = schema.rateCol >= 0 ? get(schema.rateCol) : '';
   let rate = null, rate_raw = null;
   if (rateStr) {
-    const n = parseFloat(rateStr.replace(/[,₹\s]/g, ''));
+    const n = parseFloat(rateStr.replace(/[,₹\s]/g,''));
     if (!isNaN(n) && n > 0) rate = n;
     else if (rateStr && rateStr !== '0') rate_raw = rateStr;
   }
 
   const brand = schema.brandCol >= 0 ? (get(schema.brandCol) || null) : null;
 
-  // Notes: all other cols except item/brand/rate, capped at 8 cols after rate
-  // to avoid pulling in accounting/billing data that lives far to the right
+  // Notes: 4 cols after rate only (avoids billing totals & dates far right)
   const notesParts = [];
-  const notesEnd = Math.min(row.length, schema.rateCol + 9);
-  for (let c = 0; c < notesEnd; c++) {
-    if (c === schema.itemCol || c === schema.brandCol || c === schema.rateCol) continue;
+  const notesEnd = Math.min(row.length, schema.rateCol + 5);
+  for (let c = schema.rateCol + 1; c < notesEnd; c++) {
     const v = get(c);
-    if (v && v.toLowerCase() !== 'nan' && v !== '0') notesParts.push(v);
+    if (!v || v.toLowerCase() === 'nan' || v === '0') continue;
+    // Skip cells that look like standalone large numbers (billing totals)
+    // or date strings (dd/mm/yyyy or similar)
+    const asN = parseFloat(v.replace(/[,\s]/g,''));
+    if (!isNaN(asN) && asN > 10000 && v.replace(/[,\s\d.]/g,'').length === 0) continue;
+    if (v.match(/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}$/)) continue;
+    notesParts.push(v);
   }
   const notes = notesParts.join(' | ');
 
-  return { id: idCounter, item, brand, rate, rate_raw, notes, sheet: tabName, source };
+  return { id:idCounter, item, brand, rate, rate_raw, notes, sheet:tabName, source };
 }
 
 // ── Fetch one tab from Google Sheets as CSV ───────────────────────────
@@ -540,7 +544,6 @@ async function loadAllSheets() {
       errors.push(`${cfg.label}: Spreadsheet ID not configured yet`);
       continue;
     }
-
     for (const tab of cfg.tabs) {
       tabsAttempted++;
       document.getElementById('loadingDetail').textContent =
@@ -548,10 +551,7 @@ async function loadAllSheets() {
       try {
         const csvText = await fetchTab(cfg.spreadsheetId, tab);
         const rows    = parseCSV(csvText);
-
-        // Auto-detect this sheet's column layout
-        const schema  = detectSchema(rows);
-
+        const schema  = detectSchema(rows);  // auto-detect per sheet
         for (const row of rows) {
           const obj = rowToItem(row, schema, cfg.source, tab, idCounter);
           if (obj) { allItems.push(obj); idCounter++; }
@@ -562,7 +562,6 @@ async function loadAllSheets() {
       }
     }
   }
-
   return { allItems, errors, tabsAttempted, tabsLoaded };
 }
 
