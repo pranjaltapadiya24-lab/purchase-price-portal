@@ -423,7 +423,7 @@ function detectSchema(rows) {
       const v = String(row[c] || '').trim();
       if (!v || v.toLowerCase() === 'nan') continue;
       hasData = true;
-      if (!numCount[c]) { numCount[c]=0; txtCount[c]=0; txtLen[c]=0; uniqueVals[c]=new Set(); }
+      if (numCount[c] === undefined) { numCount[c]=0; txtCount[c]=0; txtLen[c]=0; uniqueVals[c]=new Set(); }
       const n = parseFloat(v.replace(/[,₹\s]/g, ''));
       if (!isNaN(n) && n >= PRICE_MIN && n <= PRICE_MAX) {
         numCount[c]++;
